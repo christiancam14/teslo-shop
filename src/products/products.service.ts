@@ -7,6 +7,7 @@ import { Repository } from 'typeorm';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { validate as IsUUID } from 'uuid';
 import { isUUID } from 'class-validator';
+import { ProductImage } from './entities';
 
 @Injectable()
 export class ProductsService {
@@ -15,21 +16,31 @@ export class ProductsService {
 
   constructor(
     @InjectRepository(Product)
-    private readonly productRepository: Repository<Product>
+    private readonly productRepository: Repository<Product>,
+
+    @InjectRepository(ProductImage)
+    private readonly productImageRepository: Repository<ProductImage>
   ) { }
 
-  async create(createProductDto: CreateProductDto): Promise<Product> {
+  async create(createProductDto: CreateProductDto) {
 
     try {
+      const { images = [], ...productDetails } = createProductDto;
 
-      const product = this.productRepository.create(createProductDto)
-      await this.productRepository.save(product)
+      const product = this.productRepository.create({
+        ...productDetails,
+        images: images.map(image => this.productImageRepository.create({ url: image }))
+      });
 
-      return product;
+      await this.productRepository.save(product);
+
+      return { ...product, images };
 
     } catch (error) {
       this.handleDBExceptions(error);
     }
+
+
   }
 
   async createBulk(createProductsDto: CreateProductDto[]): Promise<Product[]> {
@@ -39,7 +50,10 @@ export class ProductsService {
 
       createProductsDto.forEach(product => {
         async () => {
-          const productDB = this.productRepository.create(product)
+          const productDB = this.productRepository.create({
+            ...product,
+            images: []
+          })
           await this.productRepository.save(productDB)
           productsDB.push(productDB);
         }
@@ -53,16 +67,33 @@ export class ProductsService {
   }
 
   async findAll() {
-    return await this.productRepository.find({});
+    const products = await this.productRepository.find({
+      relations: {
+        images: true
+      }
+    });
+
+    return products.map(product => ({
+      ...product,
+      images: product.images.map(img => img.url)
+    }));
   }
 
   async findPage(paginationDto: PaginationDto) {
     const { limit = 10, offset = 0 } = paginationDto;
-    return await this.productRepository.find({
+
+    const products = await this.productRepository.find({
       take: limit,
       skip: offset,
-      // TODO: relaciones
+      relations: {
+        images: true
+      }
     });
+
+    return products.map(product => ({
+      ...product,
+      images: product.images.map(img => img.url)
+    }));
   }
 
   async findOne(term: string) {
@@ -72,14 +103,16 @@ export class ProductsService {
     if (isUUID(term)) {
       product = await this.productRepository.findOneBy({ id: term });
     } else {
-      // product = product = await this.productRepository.findOneBy({ slug: term});
-      const queryBuilder = this.productRepository.createQueryBuilder();
+
+      const queryBuilder = this.productRepository.createQueryBuilder('prod');
 
       product = await queryBuilder
         .where('UPPER(title) =:title or slug =:slug', {
           title: term.toUpperCase(),
           slug: term.toLowerCase(),
-        }).getOne();
+        })
+        .leftJoinAndSelect('prod.images', 'prodImages')
+        .getOne();
     }
 
     if (!product) {
@@ -89,11 +122,20 @@ export class ProductsService {
     return product;
   }
 
+  async findOnePlain(term: string) {
+    const { images = [], ...rest } = await this.findOne(term);
+    return {
+      ...rest,
+      images: images.map(image => image.url)
+    }
+  }
+
   async update(id: string, updateProductDto: UpdateProductDto) {
 
     const product = await this.productRepository.preload({
       id: id,
-      ...updateProductDto
+      ...updateProductDto,
+      images: []
     })
 
     if (!product) {
@@ -101,14 +143,14 @@ export class ProductsService {
     }
 
     try {
-      
+
       await this.productRepository.save(product);
       return product;
-      
+
     } catch (error) {
-      
+
       this.handleDBExceptions(error);
-      
+
     }
 
   }
