@@ -8,6 +8,7 @@ import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { validate as IsUUID } from 'uuid';
 import { isUUID } from 'class-validator';
 import { ProductImage } from './entities';
+import { query } from 'express';
 
 @Injectable()
 export class ProductsService {
@@ -134,7 +135,7 @@ export class ProductsService {
 
   async update(id: string, updateProductDto: UpdateProductDto) {
 
-    const { images, ...toUpdate} = updateProductDto;
+    const { images, ...toUpdate } = updateProductDto;
 
     const product = await this.productRepository.preload({ id: id, ...toUpdate })
 
@@ -143,14 +144,35 @@ export class ProductsService {
     }
 
     // Crear query runner
-    const queryRunner = this.dataSoruce.createQueryBuilder();
+    const queryRunner = this.dataSoruce.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
 
     try {
 
-      await this.productRepository.save(product);
-      return product;
+      if (images) {
+        await queryRunner.manager.delete(ProductImage, {
+          product: { id }
+        });
+
+        product.images = images.map(
+          image => this.productImageRepository.create({ url: image })
+        );
+      }
+
+      await queryRunner.manager.save(product);
+      // await this.productRepository.save(product);
+      await queryRunner.commitTransaction();
+      await queryRunner.release();
+
+      // return product;
+      return this.findOnePlain(id);
 
     } catch (error) {
+
+      await queryRunner.rollbackTransaction();
+      await queryRunner.release();
 
       this.handleDBExceptions(error);
 
@@ -163,6 +185,22 @@ export class ProductsService {
     await this.productRepository.remove(product);
   }
 
+  async deleteAllProducts() {
+
+    const query = this.productRepository.createQueryBuilder('product');
+
+    try {
+
+      return await query
+        .delete()
+        .where({})
+        .execute();
+
+    } catch (error) {
+      this.handleDBExceptions(error);
+    }
+  }
+
   private handleDBExceptions(error: any) {
     if (error.code === '23505')
       throw new InternalServerErrorException(error.detail);
@@ -170,4 +208,5 @@ export class ProductsService {
     this.logger.error(error);
     throw new InternalServerErrorException('Unexpected error, check server logs');
   }
+
 }
