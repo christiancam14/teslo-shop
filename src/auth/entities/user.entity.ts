@@ -1,4 +1,3 @@
-import { Product } from 'src/products/entities';
 import {
   BeforeInsert,
   BeforeUpdate,
@@ -36,9 +35,6 @@ export class User {
     default: ['user'],
   })
   roles: string[];
-
-  @OneToMany(() => Product, (product) => product.user, { cascade: true })
-  product: Product;
 
   @BeforeInsert()
   checkFieldsBeforeInsert() {
